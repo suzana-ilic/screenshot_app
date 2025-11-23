@@ -4,6 +4,8 @@ A small local tool that scans a folder of screenshots, uses OCR + an LLM
 to describe them, suggests KEEP / REVIEW / DELETE, and lets you safely
 bulk-delete clutter after a confirmation step.
 
+<img width="1389" height="812" alt="Screenshot 2025-11-23 at 15 17 40" src="https://github.com/user-attachments/assets/853e4249-0420-42da-a3d6-17321e268df6" />
+
 ## Features
 
 - Scans a local folder of screenshots (`.png`, `.jpg`, `.jpeg`)
