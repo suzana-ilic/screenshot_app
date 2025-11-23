@@ -1,4 +1,4 @@
-# ScreenshotMCP – Smart Screenshot Cleaner (Gradio)
+# ScreenshotMCP – Turn your screenshot folder into an LLM-operable memory and cleaner
 
 A small local tool that scans a folder of screenshots, uses OCR + an LLM
 to describe them, suggests KEEP / REVIEW / DELETE, and lets you safely
