@@ -1,11 +1,12 @@
 """
-ScreenshotMCP – Smart Screenshot Cleaner (Gradio app)
+ScreenshotMCP – Smart Screenshot Cleaner + Search (Gradio app)
 
 - Scans a local folder of screenshots
 - Uses Tesseract OCR + OpenAI to describe and categorize each screenshot
 - Lets you mark screenshots as KEEP / REVIEW / DELETE
 - Shows a confirmation dialog before deleting any files from disk
 - Click a filename row to open that screenshot locally
+- NEW: search screenshots with a natural-language query (e.g. "job posting")
 """
 
 import os
@@ -15,6 +16,7 @@ import yaml
 import subprocess
 from glob import glob
 import textwrap
+import inspect
 
 import gradio as gr
 from PIL import Image
@@ -266,6 +268,61 @@ Return ONLY JSON:
 
 
 # =========================
+# NEW: LLM relevance for search
+# =========================
+
+def llm_search_relevance(ocr_text: str, query: str):
+    """
+    Given OCR text from one screenshot and a natural-language query,
+    return a relevance score and a short description.
+    """
+    if not ocr_text.strip():
+        return 0.0, "(no text detected)"
+
+    prompt = f"""
+You are helping a user search their screenshots.
+
+User query:
+{query}
+
+OCR text from ONE screenshot (may be noisy):
+{ocr_text[:6000]}
+
+1. Rate how relevant this screenshot is to the user query.
+   Use a float between 0.0 and 1.0 (0 = not relevant at all, 1 = perfect match).
+2. Write ONE short description (max 15 words) of what is shown in this screenshot.
+
+Return ONLY JSON:
+{{
+  "score": 0.0,
+  "description": "..."
+}}
+"""
+
+    try:
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            temperature=0,
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": ocr_text[:6000]},
+            ],
+        )
+        content = resp.choices[0].message.content
+        data = _parse_json_block(content)
+
+        score = float(data.get("score", 0.0))
+        description = (data.get("description") or "").strip() or "(no description)"
+        score = max(0.0, min(1.0, score))
+        return score, description
+    except Exception:
+        # cheap fallback: keyword presence
+        score = 0.8 if query.lower() in ocr_text.lower() else 0.1
+        description = ocr_text.splitlines()[0][:120] if ocr_text else "(no text)"
+        return score, description
+
+
+# =========================
 # Core processing
 # =========================
 
@@ -481,6 +538,78 @@ def open_screenshot_from_table(rows, file_paths, evt: gr.SelectData):
 
 
 # =========================
+# NEW: natural-language search over screenshots
+# =========================
+
+def search_folder_for_query(folder_path: str, query: str,
+                            min_score: float = 0.2,
+                            top_k: int = 20):
+    """
+    Scan the folder, run OCR + relevance scoring for a natural-language query.
+
+    Returns ONLY the hits (score >= min_score), sorted by score desc,
+    limited to top_k.
+
+    Outputs:
+    - rows: [Filename, Match description, Score]
+    - mapping filename -> full path (for click-to-open)
+    - debug text
+    """
+    folder_path = folder_path.strip()
+    if not folder_path:
+        return [], {}, "Please provide a folder path."
+
+    if not query.strip():
+        return [], {}, "Please provide a search query."
+
+    files = list_screenshot_files(folder_path)
+    if not files:
+        return [], {}, f"Scanned folder: {folder_path} — no images found."
+
+    rows = []
+    file_paths = {}
+
+    for path in files:
+        full_path = os.path.abspath(path)
+        filename = os.path.basename(path)
+        file_paths[filename] = full_path
+
+        try:
+            img = Image.open(path)
+            ocr_text = ocr_image(img)
+        except Exception as e:
+            score = 0.0
+            description = f"(error opening file: {e})"
+        else:
+            score, description = llm_search_relevance(ocr_text, query)
+
+        rows.append([filename, description, float(score)])
+
+    # keep only hits
+    hits = [r for r in rows if r[2] >= min_score]
+
+    # sort by score descending
+    hits.sort(key=lambda r: r[2], reverse=True)
+
+    # cap number of results
+    hits = hits[:top_k]
+
+    debug = (
+        f"Scanned folder: {folder_path}\n"
+        f"Total screenshots: {len(files)}\n"
+        f"Returned hits (score ≥ {min_score}): {len(hits)}"
+    )
+    return hits, file_paths, debug
+
+
+def open_screenshot_from_search(rows, file_paths, evt: gr.SelectData):
+    """
+    Same as open_screenshot_from_table, but for the search results table.
+    """
+    return open_screenshot_from_table(rows, file_paths, evt)
+
+
+# =========================
 # Gradio UI
 # =========================
 
@@ -493,10 +622,12 @@ with gr.Blocks() as demo:
         - Use OCR + LLM to describe and categorize them  
         - Edit the **Action** column (KEEP / REVIEW / DELETE)  
         - Use **Review & delete** to confirm before any files are removed  
-        - Click any **Filename** row to open that screenshot locally
+        - Click any **Filename** row to open that screenshot locally  
+        - 🔍 NEW: search screenshots with a natural-language query
         """
     )
 
+    # ---------- Main cleaner UI (original) ----------
     folder_input = gr.Textbox(
         label="Screenshot folder path",
         value=DEFAULT_SCREENSHOT_FOLDER,
@@ -577,5 +708,57 @@ with gr.Blocks() as demo:
         outputs=open_status,
     )
 
+    # ---------- NEW: Search UI ----------
+    gr.Markdown("## 🔍 Search screenshots")
+
+    search_folder_input = gr.Textbox(
+        label="Screenshot folder path (for search)",
+        value=DEFAULT_SCREENSHOT_FOLDER,
+    )
+    search_query_input = gr.Textbox(
+        label="Search query",
+        placeholder="e.g. job posting",
+    )
+
+    with gr.Row():
+        search_btn = gr.Button("Search screenshots", variant="primary")
+
+    search_results = gr.Dataframe(
+        headers=["Filename", "Match description", "Score"],
+        datatype=["str", "str", "number"],
+        interactive=False,
+        label="Search results (click row to open screenshot)",
+    )
+    search_debug = gr.Markdown(label="Search info")
+    search_open_status = gr.Markdown(label="Search open status")
+    search_file_state = gr.State({})  # filename -> full path for search
+
+    search_btn.click(
+        fn=search_folder_for_query,
+        inputs=[search_folder_input, search_query_input],
+        outputs=[search_results, search_file_state, search_debug],
+    )
+
+    search_results.select(
+        fn=open_screenshot_from_search,
+        inputs=[search_results, search_file_state],
+        outputs=search_open_status,
+    )
+
 if __name__ == "__main__":
-    demo.launch()
+    launch_kwargs = {
+        "server_name": "0.0.0.0",
+        "server_port": 7860,
+    }
+
+    # Enable MCP server mode when supported by this Gradio version.
+    if "mcp_server" in inspect.signature(gr.Blocks.launch).parameters:
+        launch_kwargs["mcp_server"] = True
+        print("Launching with MCP server enabled.")
+    else:
+        print(
+            "gradio.Blocks.launch() has no `mcp_server` argument. "
+            "Upgrade to gradio[mcp]>=4.48.0 to expose MCP tools."
+        )
+
+    demo.launch(**launch_kwargs)
