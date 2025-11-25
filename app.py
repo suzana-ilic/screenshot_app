@@ -17,6 +17,7 @@ import subprocess
 from glob import glob
 import textwrap
 import inspect
+import gradio.mcp as gr_mcp
 
 import gradio as gr
 from PIL import Image
@@ -55,6 +56,7 @@ client = OpenAI(api_key=api_key)
 
 # Default screenshot folder (can be changed in the UI)
 DEFAULT_SCREENSHOT_FOLDER = os.path.expanduser("~/Desktop/Screenshots")
+MCP_MAX_FILES = 100
 
 
 # =========================
@@ -610,6 +612,143 @@ def open_screenshot_from_search(rows, file_paths, evt: gr.SelectData):
 
 
 # =========================
+# MCP tool wrappers (API-first)
+# =========================
+
+
+def _resolve_folder(folder_path: str) -> str:
+    """Expand user paths and validate the folder exists."""
+    folder_path = os.path.abspath(os.path.expanduser(folder_path or DEFAULT_SCREENSHOT_FOLDER))
+    if not os.path.isdir(folder_path):
+        raise ValueError(f"Folder does not exist: {folder_path}")
+    return folder_path
+
+
+@gr_mcp.tool(name="list_screenshots", description="List screenshot files in a folder.")
+def mcp_list_screenshots(folder: str = DEFAULT_SCREENSHOT_FOLDER,
+                         max_files: int = 50):
+    folder_path = _resolve_folder(folder)
+    max_files = int(max_files)
+    files = list_screenshot_files(folder_path)[: min(max_files, MCP_MAX_FILES)]
+    return [
+        {"filename": os.path.basename(p), "path": p}
+        for p in files
+    ]
+
+
+@gr_mcp.tool(name="analyze_screenshots", description="OCR + classify screenshots in a folder.")
+def mcp_analyze_screenshots(folder: str = DEFAULT_SCREENSHOT_FOLDER,
+                            max_files: int = 20):
+    folder_path = _resolve_folder(folder)
+    max_files = int(max_files)
+    files = list_screenshot_files(folder_path)[: min(max_files, MCP_MAX_FILES)]
+    results = []
+
+    for path in files:
+        filename = os.path.basename(path)
+        try:
+            img = Image.open(path)
+            ocr_text = ocr_image(img)
+        except Exception as e:
+            results.append(
+                {
+                    "filename": filename,
+                    "description": f"(error opening: {e})",
+                    "suggestion": "SKIP",
+                    "action": "REVIEW",
+                }
+            )
+            continue
+
+        description, suggestion, action = llm_describe_and_classify(ocr_text)
+        results.append(
+            {
+                "filename": filename,
+                "description": description,
+                "suggestion": suggestion,
+                "action": action,
+            }
+        )
+
+    return {"folder": folder_path, "results": results}
+
+
+@gr_mcp.tool(name="search_screenshots", description="Search screenshots with a natural-language query.")
+def mcp_search_screenshots(folder: str = DEFAULT_SCREENSHOT_FOLDER,
+                           query: str = "",
+                           max_files: int = 50,
+                           top_k: int = 10,
+                           min_score: float = 0.2):
+    folder_path = _resolve_folder(folder)
+    max_files = int(max_files)
+    top_k = int(top_k)
+    files = list_screenshot_files(folder_path)[: min(max_files, MCP_MAX_FILES)]
+    if not query.strip():
+        return {"error": "Please provide a search query."}
+
+    rows = []
+    for path in files:
+        filename = os.path.basename(path)
+        try:
+            img = Image.open(path)
+            ocr_text = ocr_image(img)
+        except Exception as e:
+            score = 0.0
+            description = f"(error opening file: {e})"
+        else:
+            score, description = llm_search_relevance(ocr_text, query)
+
+        rows.append([filename, description, float(score)])
+
+    hits = [r for r in rows if r[2] >= min_score]
+    hits.sort(key=lambda r: r[2], reverse=True)
+    hits = hits[:top_k]
+
+    return {
+        "folder": folder_path,
+        "query": query,
+        "results": [
+            {"filename": f, "description": desc, "score": score}
+            for f, desc, score in hits
+        ],
+    }
+
+
+@gr_mcp.tool(name="delete_screenshots", description="Delete screenshots by filename within a folder.")
+def mcp_delete_screenshots(folder: str = DEFAULT_SCREENSHOT_FOLDER,
+                           filenames: list[str] | str = None):
+    folder_path = _resolve_folder(folder)
+    if filenames is None:
+        return {"deleted": [], "deleted_count": 0, "skipped": []}
+
+    if isinstance(filenames, str):
+        try:
+            filenames = json.loads(filenames)
+        except Exception:
+            filenames = [filenames]
+
+    deleted = []
+    skipped = []
+    for fname in filenames:
+        path = os.path.join(folder_path, fname)
+        if not os.path.exists(path):
+            skipped.append([fname, "not found"])
+            continue
+        try:
+            os.remove(path)
+            deleted.append(fname)
+        except Exception as e:
+            skipped.append([fname, f"error: {e}"])
+
+    return {
+        "folder": folder_path,
+        "deleted": deleted,
+        "deleted_count": len(deleted),
+        "skipped": skipped,
+    }
+
+
+# =========================
 # Gradio UI
 # =========================
 
@@ -744,6 +883,54 @@ with gr.Blocks() as demo:
         inputs=[search_results, search_file_state],
         outputs=search_open_status,
     )
+
+    # ---------- MCP tool endpoints (hidden UI, API-only) ----------
+    with gr.Group(visible=False):
+        mcp_folder_input = gr.Textbox(value=DEFAULT_SCREENSHOT_FOLDER, label="MCP folder")
+        mcp_max_files_input = gr.Number(value=20, label="MCP max files")
+        mcp_query_input = gr.Textbox(value="", label="MCP search query")
+        mcp_min_score_input = gr.Number(value=0.2, label="MCP min score")
+        mcp_top_k_input = gr.Number(value=10, label="MCP top_k")
+        mcp_filenames_input = gr.Textbox(value="[]", label="MCP filenames (JSON list)")
+
+        mcp_list_output = gr.JSON(label="mcp_list_screenshots")
+        mcp_analyze_output = gr.JSON(label="mcp_analyze_screenshots")
+        mcp_search_output = gr.JSON(label="mcp_search_screenshots")
+        mcp_delete_output = gr.JSON(label="mcp_delete_screenshots")
+
+        gr.Button("Run mcp_list_screenshots", visible=False).click(
+            fn=mcp_list_screenshots,
+            inputs=[mcp_folder_input, mcp_max_files_input],
+            outputs=mcp_list_output,
+            api_name="mcp_list_screenshots",
+        )
+
+        gr.Button("Run mcp_analyze_screenshots", visible=False).click(
+            fn=mcp_analyze_screenshots,
+            inputs=[mcp_folder_input, mcp_max_files_input],
+            outputs=mcp_analyze_output,
+            api_name="mcp_analyze_screenshots",
+        )
+
+        gr.Button("Run mcp_search_screenshots", visible=False).click(
+            fn=mcp_search_screenshots,
+            inputs=[
+                mcp_folder_input,
+                mcp_query_input,
+                mcp_max_files_input,
+                mcp_top_k_input,
+                mcp_min_score_input,
+            ],
+            outputs=mcp_search_output,
+            api_name="mcp_search_screenshots",
+        )
+
+        gr.Button("Run mcp_delete_screenshots", visible=False).click(
+            fn=mcp_delete_screenshots,
+            inputs=[mcp_folder_input, mcp_filenames_input],
+            outputs=mcp_delete_output,
+            api_name="mcp_delete_screenshots",
+        )
 
 if __name__ == "__main__":
     launch_kwargs = {
