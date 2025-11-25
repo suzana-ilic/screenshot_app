@@ -1,29 +1,15 @@
 # ScreenshotMCP — Smart Screenshot Cleaner + Search
 
-Me and probably millions of other people have the same problem:  
-we hoard hundreds (sometimes thousands) of screenshots because they’re important *in the moment*, but they instantly vanish into chaos. There’s no way to search them. No way to organize them. No way to actually use them later.
+Me and probably millions of other people have the same problem: We hoard hundreds (sometimes thousands) of screenshots because they’re important *in the moment*, but they instantly vanish into chaos. There’s no way to search them. No way to organize them. No way to actually use them later.
 
 **ScreenshotMCP fixes that.**  
-It turns your screenshots into a fully searchable, semantically aware, privacy-preserving knowledge base — powered by a local MCP server.
+It turns your screenshots into a fully searchable, semantically aware, privacy-preserving knowledge base — powered by a local MCP server. ScreenshotMCP transforms your screenshot folder into a structured, queryable dataset using OCR + LLMs, exposed through a local MCP server so AI tools like Cursor and Claude Desktop can interact with them safely.
 
-## Overview
-
-Screenshots are fast to capture and impossible to find later.
-
-ScreenshotMCP transforms your screenshot folder into a structured, queryable dataset using **OCR + LLMs**, exposed through a local MCP server so AI tools like **Cursor** and **Claude Desktop** can interact with them safely.
+https://github.com/user-attachments/assets/dbd2bc88-d014-4861-9d60-1e62e576763f
 
 ## Problem
 
-Screenshots folders contain
-
-- job postings  
-- receipts  
-- flight confirmations  
-- UI bug reports  
-- memes  
-- medical instructions  
-- TODO reminders  
-- conversations  
+Screenshots folders contain job postings, receipts, flight confirmations, bug reports, memes, TODO reminders.
 
 But:
 
@@ -38,33 +24,21 @@ But:
 
 ScreenshotMCP introduces an intelligent screenshot workflow:
 
-### ✔️ OCR every screenshot (Tesseract)
-Extracts real text from images.
+#### ✔️ OCR every screenshot: Extracts real text from images.
 
-### ✔️ LLM-powered classification
-Each screenshot is analyzed and labeled with:
-
+#### ✔️ LLM-powered classification: Each screenshot is analyzed and labeled with:
 - a short description  
 - a category (`KEEP_IMPORTANT`, `KEEP`, `REVIEW`, `DELETE`)  
 - a reason  
 - suggested action  
 
-### ✔️ Natural-language search  
-Search your screenshots conversationally:
+#### ✔️ Natural-language search: Search your screenshots conversationally
 
-- “Find job applications”  
-- “Screenshots containing my passport number”  
-- “Flight bookings this year”  
-- “Screenshots with error messages”  
+#### ✔️ Safe deletion workflow: Only (bulk) deletes after explicit confirmation
 
-### ✔️ Safe deletion workflow  
-Only (bulk) deletes after explicit confirmation.
+#### ✔️ Fully local & privacy-first: Your images never leave your machine
 
-### ✔️ Fully local & privacy-first  
-Your images never leave your machine.
-
-### ✔️ Exposed through MCP  
-Allows AI tools to read, classify, search, and manage screenshots through tool calls.
+### ✔️ Exposed through MCP: Allows AI tools to read, classify, search, and manage screenshots through tool calls
 
 ## Features
 
@@ -77,35 +51,48 @@ Allows AI tools to read, classify, search, and manage screenshots through tool c
 | Click-to-Open | Open screenshot files directly |
 | MCP Tools | 4 consistent tool endpoints |
 
-## MCP Tools
+## MCP API Tools (Primary Tools)
 
-| Tool | Purpose |
-|------|---------|
-| `mcp_list_screenshots` | List files in a screenshot folder |
-| `mcp_analyze_screenshots` | OCR + description + category suggestions |
-| `mcp_search_screenshots` | Natural-language search with scoring |
-| `mcp_delete_screenshots` | Safely delete selected screenshots | 
+| Tool Name               | Parameters                                                                                       | Description                                      |
+|-------------------------|--------------------------------------------------------------------------------------------------|--------------------------------------------------|
+| **mcp_list_screenshots**   | `folder` (string), `max_files` (number, default: 20)                                             | Lists screenshot files in a folder.              |
+| **mcp_analyze_screenshots** | `folder` (string), `max_files` (number, default: 20)                                             | Runs OCR + LLM classification on screenshots.    |
+| **mcp_search_screenshots**  | `folder` (string), `query` (string), `max_files` (20), `top_k` (10), `min_score` (0.2)           | Natural-language screenshot search.              |
+| **mcp_delete_screenshots**  | `folder` (string), `filenames` (string or list, default: \[\])                                  | Deletes screenshots by filename.                 |
 
-## Installation
+## UI / Gradio Tools (Internal UI Tools)
+
+| Tool Name                        | Parameters                                          | Description                                          |
+|----------------------------------|-----------------------------------------------------|------------------------------------------------------|
+| **process_folder**               | `folder_path` (string)                              | Full folder OCR + classification pipeline.           |
+| **prepare_delete**               | `rows` (table), `file_paths` (dict)                 | Prepares deletion confirmation dialog.               |
+| **apply_deletes**                | `rows` (table), `file_paths` (dict)                 | Executes screenshot deletions.                       |
+| **cancel_delete**                | *(none)*                                            | Cancels deletion dialog.                             |
+| **open_screenshot_from_table**   | `rows` (table), `file_paths` (dict), `evt`          | Opens screenshot from UI table click.                |
+| **search_folder_for_query**      | `folder` (string), `query` (string)                 | Natural-language search in UI.                        |
+| **open_screenshot_from_search**  | `results` (table), `evt`                            | Opens screenshot from search results.                |
+
+
+## Instructions
 
 ### 1. Clone the repo
 
-git clone https://github.com/suzana-ilic/screenshot_app
-cd screenshot-app
-
+_git clone https://github.com/suzana-ilic/screenshot_app
+_
+_cd screenshot-app
+_
 ### 2. Create a virtual environment
-python3 -m venv venv
-source venv/bin/activate
-
+_python3 -m venv venv
+_
+_source venv/bin/activate
+_
 ### 3. Install dependencies
-pip install -r requirements.txt
+_pip install -r requirements.txt
+_
 
-### 4. Install Tesseract (macOS)
-brew install tesseract
-
-### 5. Run the MCP server
-python app.py
-
+### 4. Run the MCP server
+_python app.py
+_
 
 ## Contributors & dev tools used
 - [Suzana Ilić](https://x.com/suzatweet)
