@@ -77,22 +77,24 @@ ScreenshotMCP introduces an intelligent screenshot workflow:
 
 ### 1. Clone the repo
 
-_git clone https://github.com/suzana-ilic/screenshot_app
-_
-_cd screenshot-app
-_
+- git clone https://github.com/suzana-ilic/screenshot_app
+- cd screenshot-app
+
 ### 2. Create a virtual environment
-_python3 -m venv venv
-_
-_source venv/bin/activate
-_
+- python3 -m venv venv
+- source venv/bin/activate
+
 ### 3. Install dependencies
-_pip install -r requirements.txt
-_
+- ip install -r requirements.txt
 
 ### 4. Run the MCP server
-_python app.py
-_
+- python app.py
+
+## Cursor Demo
+
+https://github.com/user-attachments/assets/3fc60316-2d40-444d-a970-d9b25f161c78
+
+
 
 ## Contributors & dev tools used
 - [Suzana Ilić](https://x.com/suzatweet)
